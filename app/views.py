@@ -2,6 +2,7 @@ import json
 import os
 import requests
 from flask import render_template, redirect, request, send_file, flash, url_for
+from app import file_encryptor
 from werkzeug.utils import secure_filename
 from flask_login import login_user, logout_user, current_user, login_required
 from app import app, bcrypt, login_manager, users
@@ -181,34 +182,35 @@ def submit():
     user = request.form["user"]
     up_file = request.files["v_file"]
     
-    # Get the original file path if available
-    original_path = request.files['v_file'].filename
-    if os.path.exists(original_path):
-        # Use the original file if it exists
-        files[up_file.filename] = original_path
-        file_states = os.stat(original_path).st_size
-    else:
-        # Save to upload directory if no original path
-        up_file.save(os.path.join("app/static/Uploads/", secure_filename(up_file.filename)))
-        files[up_file.filename] = os.path.join(app.root_path, "static", "Uploads", up_file.filename)
-        file_states = os.stat(files[up_file.filename]).st_size
+    # Get base filename without extension
+    base_filename = os.path.splitext(secure_filename(up_file.filename))[0]
     
-    # Read file data - handle CSV files specially
-    if up_file.filename.lower().endswith('.csv'):
-        with open(files[up_file.filename], 'r', encoding='utf-8') as f:
-            file_data = f.read()
-    else:
-        with open(files[up_file.filename], 'rb') as f:
-            file_data = str(f.read())
+    # Save directly to encrypted file
+    enc_file_path = os.path.join("app/static/Uploads/", f"{base_filename}.enc")
+    up_file.save(enc_file_path)  # Save original content temporarily
+    
+    # Get file size before encryption
+    file_states = os.stat(enc_file_path).st_size
+    
+    # Encrypt the file in-place
+    password = current_user.password if current_user.is_authenticated else "anonymous"
+    file_encryptor.encrypt_file(enc_file_path, enc_file_path, password)
+    
+    # Store path to encrypted file
+    files[up_file.filename] = enc_file_path
+    
+    # Read and encode encrypted file data as base64
+    with open(files[up_file.filename], 'rb') as f:
+        import base64
+        file_data = base64.b64encode(f.read()).decode('utf-8')
     
     # Create transaction object
     post_object = {
         "user": user,
         "v_file": up_file.filename,
-        "file_data": file_data,
+        "file_data": file_data,  # Now base64 encoded string
         "file_size": file_states,
-        "owner": current_user.username if current_user.is_authenticated else "anonymous",
-        "original_path": original_path if os.path.exists(original_path) else None
+        "owner": current_user.username if current_user.is_authenticated else "anonymous"
     }
    
     # Submit a new transaction
@@ -234,8 +236,28 @@ def download_file(variable):
                     if (current_user.is_authenticated and 
                         (current_user.username == trans.get("owner") or 
                          current_user.is_master)) or trans.get("owner") == "anonymous":
-                        p = files[variable]
-                        return send_file(p, as_attachment=True)
+                        # Create temp file for decryption using base filename with .csv
+                        base_filename = os.path.splitext(variable)[0]
+                        temp_path = os.path.join(app.root_path, "static", "Uploads", f"temp_{base_filename}.csv")
+                        password = current_user.password if current_user.is_authenticated else "anonymous"
+                        file_encryptor.decrypt_file(files[variable], temp_path, password)
+                        
+                        # Send decrypted file and ensure temp file is deleted
+                        try:
+                            response = send_file(temp_path, as_attachment=True)
+                            
+                            # Double verification for file deletion
+                            def cleanup():
+                                if os.path.exists(temp_path):
+                                    os.remove(temp_path)
+                            
+                            response.call_on_close(cleanup)
+                            return response
+                        except Exception as e:
+                            # Ensure cleanup even if send fails
+                            if os.path.exists(temp_path):
+                                os.remove(temp_path)
+                            raise e
                     else:
                         flash('You do not have permission to access this file', 'danger')
                         return redirect(url_for('index'))
