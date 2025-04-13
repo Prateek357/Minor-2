@@ -1,0 +1,45 @@
+{% extends "new_base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2 class="text-center alert alert-info">Block Details</h2>
+    <div class="card">
+        <div class="card-header">
+            <h4>File: {{ filename }}</h4>
+        </div>
+        <div class="card-body">
+            <h5 class="card-title">File Information</h5>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item">
+                    <strong>Filename:</strong> {{ filename }}
+                </li>
+                <li class="list-group-item">
+                    <strong>Block Index:</strong> {{ block.index }}
+                </li>
+                <li class="list-group-item">
+                    <strong>Previous Hash:</strong>
+                    <small>{{ block.prev_hash }}</small>
+                </li>
+            </ul>
+
+            <h5 class="mt-4">Transaction Details</h5>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item">
+                    <strong>Owner:</strong> {{ transaction.owner }}
+                </li>
+                <li class="list-group-item">
+                    <strong>File Size:</strong> {{ transaction.file_size }} bytes
+                </li>
+                <li class="list-group-item">
+                    <strong>Uploaded By:</strong> {{ transaction.user }}
+                </li>
+            </ul>
+
+            <div class="mt-4">
+                <a href="{{ url_for('download_file', variable=filename) }}" class="btn btn-primary">Download File</a>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary">Back to Files</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

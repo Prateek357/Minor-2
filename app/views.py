@@ -87,7 +87,7 @@ def login():
         else:
             flash('Login failed. Check username and password', 'danger')
     
-    return render_template('login.html')
+    return render_template('new_login.html')
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
@@ -112,7 +112,7 @@ def signup():
             flash('Account created successfully! Please login', 'success')
             return redirect(url_for('login'))
     
-    return render_template('signup.html')
+    return render_template('new_signup.html')
 
 @app.route('/logout')
 @login_required
@@ -134,7 +134,7 @@ def view_block(block_index, filename):
                     if (trans.get("v_file") == filename and 
                         (current_user.username == trans.get("owner") or 
                          current_user.is_master)):
-                        return render_template("view_block.html",
+                        return render_template("new_view_block.html",
                             block=block,
                             transaction=trans,
                             filename=filename)
@@ -168,7 +168,7 @@ def index():
                    (current_user.is_authenticated and 
                     (current_user.username == tx.get('owner') or 
                      current_user.is_master)))]
-    return render_template("index.html",
+    return render_template("new_index.html",
                          title="FileStorage",
                          subtitle="A Decentralized Network for File Storage/Sharing",
                          node_address=ADDR,
@@ -242,22 +242,70 @@ def download_file(variable):
                         password = current_user.password if current_user.is_authenticated else "anonymous"
                         file_encryptor.decrypt_file(files[variable], temp_path, password)
                         
-                        # Send decrypted file and ensure temp file is deleted
                         try:
+                            # First try normal deletion after send
                             response = send_file(temp_path, as_attachment=True)
                             
-                            # Double verification for file deletion
-                            def cleanup():
+                            def delete_temp_file(filepath):
+                                """Force delete file with multiple strategies"""
+                                try:
+                                    # First try normal deletion
+                                    if os.path.exists(filepath):
+                                        os.remove(filepath)
+                                        app.logger.debug(f"Deleted temp file: {filepath}")
+                                        return
+                                    
+                                    # If file doesn't exist, nothing to do
+                                    app.logger.warning(f"Temp file not found: {filepath}")
+                                    return
+                                    
+                                except Exception as e:
+                                    app.logger.warning(f"First delete attempt failed: {str(e)}")
+                                    
+                                    # If normal delete fails, try forcing it after a delay
+                                    import time
+                                    time.sleep(1)  # Wait for file handles to release
+                                    try:
+                                        if os.path.exists(filepath):
+                                            os.remove(filepath)
+                                            app.logger.debug(f"Force deleted after delay: {filepath}")
+                                            return
+                                    except Exception as e:
+                                        app.logger.warning(f"Force delete failed: {str(e)}")
+                                        
+                                        # Final fallback - rename and delete
+                                        try:
+                                            if os.path.exists(filepath):
+                                                temp_name = f"{filepath}.deleteme"
+                                                os.rename(filepath, temp_name)
+                                                os.remove(temp_name)
+                                                app.logger.debug(f"Used rename-and-delete for: {filepath}")
+                                        except Exception as e:
+                                            app.logger.error(f"All deletion attempts failed for {filepath}: {str(e)}")
+                            
+                            # Ensure cleanup runs even if response fails
+                            try:
+                                response = send_file(temp_path, as_attachment=True)
+                                response.call_on_close(lambda: delete_temp_file(temp_path))
+                                return response
+                            except:
+                                delete_temp_file(temp_path)
+                                raise
+                            
+                        except Exception as e:
+                            # Immediate cleanup if download fails
+                            try:
                                 if os.path.exists(temp_path):
                                     os.remove(temp_path)
-                            
-                            response.call_on_close(cleanup)
-                            return response
-                        except Exception as e:
-                            # Ensure cleanup even if send fails
-                            if os.path.exists(temp_path):
-                                os.remove(temp_path)
-                            raise e
+                            except:
+                                try:
+                                    temp_name = f"{temp_path}.deleteme"
+                                    os.rename(temp_path, temp_name)
+                                    os.remove(temp_name)
+                                except:
+                                    pass
+                            flash('File download failed', 'danger')
+                            return redirect(url_for('index'))
                     else:
                         flash('You do not have permission to access this file', 'danger')
                         return redirect(url_for('index'))
